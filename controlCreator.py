@@ -16,7 +16,8 @@ except ImportError:
     from PySide import __version__
     from shiboken import wrapInstance
 
-# TODO Allow items to flow as a grid and fill up row, continue on column
+# TODO Look into developing option to get curve.points from the pivot of the object.
+# TODO add options for loading curve, position to create them at, buffer groups. Custom attributes to throw them on creation?
 
 # Get the Maya window so we can parent our widget to it.
 mayaMainWindowPtr = omui.MQtUtil.mainWindow()
@@ -131,6 +132,9 @@ class Window(QWidget):
         self.listWidget.setGridSize(QSize(64, 64))
 
         self.layout().addWidget(self.listWidget)
+
+        # Set resize mode for our list view to adjust layout
+        self.listWidget.setResizeMode(QListView.ResizeMode.Adjust)
 
         self.load_library()
 
