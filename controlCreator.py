@@ -16,7 +16,7 @@ except ImportError:
     from PySide import __version__
     from shiboken import wrapInstance
 
-# TODO Change listView to tableView and connect our parsing function to allow users to recreate curves.
+# TODO Allow items to flow as a grid and fill up row, continue on column
 
 # Get the Maya window so we can parent our widget to it.
 mayaMainWindowPtr = omui.MQtUtil.mainWindow()
@@ -54,7 +54,7 @@ def save_curve(name, curve=None):
     cvs = [(p.x, p.y, p.z) for p in curve.getCVs()]
     knots = curve.getKnots()
 
-    data = ([name, {"Degrees": degrees, "Periodic": periodic, "Points": cvs, "Knots": knots}])
+    data = ([name, {"degree": degrees, "periodic": periodic, "point": cvs, "knot": knots}])
 
     file_name = os.path.join(save_folder, '{}.json'.format(name))
     with open(file_name, 'w') as fp:
@@ -97,14 +97,15 @@ def load_curve(file_name):
     return data
 
 def parse(data):
-    """ Earlier JSON was stored as data[0] == Name, data[1] == Actual data to recreate curve. """
+    """ Parse the json data and write the command that we're going to run, used to have this for actual functionality
+     but calling eval(command) isn't the most clever thing to do. """
     try:
-        degrees = "d={}".format(data["Degrees"])
-        periodic = "periodic={}".format(data["Periodic"])
-        points = 'p={}'.format([tuple(p) for p in data["Points"]])
-        knots = 'k={}'.format([int(k) for k in data["Knots"]])
+        degrees = "d={}".format(data["degree"])
+        periodic = "periodic={}".format(data["periodic"])
+        points = 'p={}'.format([tuple(p) for p in data["point"]])
+        knots = 'k={}'.format([int(k) for k in data["knot"]])
 
-        # Run command to recreate saved curve.
+        # String of the pymel command to recreate saved curve.
         return "pm.curve({})".format(', '.join([degrees, periodic, points, knots]))
 
     except Exception as e:
@@ -124,8 +125,11 @@ class Window(QWidget):
         self.mainLayout()
         self.saveGroupbox()
 
-        self.listWidget = QListWidget()
+        self.listWidget = CurveList()
+        self.listWidget.setViewMode(QListView.IconMode)
         self.listWidget.setIconSize(QSize(64,64))
+        self.listWidget.setGridSize(QSize(64, 64))
+
         self.layout().addWidget(self.listWidget)
 
         self.load_library()
@@ -139,13 +143,14 @@ class Window(QWidget):
         layout = QGridLayout()
         save_groupbox.setLayout(layout)
 
-        self.name_lineEdit = QLineEdit("controller1")
-
         self.curve_lineEdit = QLineEdit()
         self.curve_lineEdit.setToolTip("Specify Curve to save, if empty will use first item in selection.")
 
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self.save)
+
+        self.name_lineEdit = RequiredLineEdit("controller1", self.save_button)
+        self.name_lineEdit.setToolTip("Name must be specified to save a curve.")
 
         layout.addWidget(QLabel("Name:"), 1, 1)
         layout.addWidget(self.name_lineEdit, 1, 2)
@@ -163,6 +168,9 @@ class Window(QWidget):
             self.curve_lineEdit.text()
         )
 
+        # Reload the library on saves.
+        self.load_library()
+
     def load_library(self):
 
         # Clear the widget
@@ -174,15 +182,52 @@ class Window(QWidget):
 
         for f in library:
             data = load_curve(f)
-            item = QListWidgetItem(data[0])
+            item = CurveItem(self.listWidget, name=data[0], params=data[1])
 
             iconPath = os.path.join(save_folder, "{}.png".format(data[0]))
             icon = QIcon(iconPath)
             item.setIcon(icon)
 
+            item.setToolTip(parse(data[1]))
+
             item.setSizeHint(QSize(64, 64))
 
             self.listWidget.addItem(item)
+
+class RequiredLineEdit(QLineEdit):
+    def __init__(self, text, button):
+        super(RequiredLineEdit, self).__init__(text=text)
+
+        self.button = button
+
+        self.textChanged.connect(self.checkNotEmpty)
+
+    def checkNotEmpty(self):
+        if not self.text():
+            self.button.setEnabled(False)
+        else:
+            self.button.setEnabled(True)
+
+class CurveList(QListWidget):
+    def __init__(self):
+        super(CurveList, self).__init__()
+        self.itemClicked.connect(self.createCurve)
+
+    def createCurve(self, item):
+        """ Make a pymel call to curve with the stored params. """
+        # TODO Look into why item.params doesn't cut it - is it that they are unicode strings and not strings?
+        params = {}
+        params['degree'] = item.params['degree']
+        params['periodic'] = item.params['periodic']
+        params['point'] = item.params['point']
+        params['knot'] = item.params['knot']
+        pm.curve(**params)
+
+class CurveItem(QListWidgetItem):
+    def __init__(self, parent, name, params):
+        super(CurveItem, self).__init__(parent=parent)
+        self.params = params
+        self.name = name
 
 def getUI():
     window = Window()
