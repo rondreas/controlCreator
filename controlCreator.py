@@ -18,6 +18,7 @@ except ImportError:
 
 # TODO Look into developing option to get curve.points from the pivot of the object.
 # TODO add options for loading curve, position to create them at, buffer groups. Custom attributes to throw them on creation?
+# TODO Graphical issue, when selecting an icon one can see a few bright pixels near lower border.
 
 # Get the Maya window so we can parent our widget to it.
 mayaMainWindowPtr = omui.MQtUtil.mainWindow()
@@ -51,9 +52,12 @@ def save_curve(name, curve=None):
 
     # Get all pertinent data to recreate our curve.
     degrees = curve.degree()
-    periodic = True if curve.form().key is "periodic" else False    # Can also be either Open or Closed, not sure how this effects what I am trying to do.
+    # Can also be either Open or Closed, not sure how this effects what I am trying to do.
+    periodic = True if curve.form().key is "periodic" else False
     cvs = [(p.x, p.y, p.z) for p in curve.getCVs()]
     knots = curve.getKnots()
+
+    # TODO Option to save points relative to their pivot - ( Origo-kTransform.pivot ) + PointN...
 
     data = ([name, {"degree": degrees, "periodic": periodic, "point": cvs, "knot": knots}])
 
@@ -219,18 +223,13 @@ class CurveList(QListWidget):
 
     def createCurve(self, item):
         """ Make a pymel call to curve with the stored params. """
-        # TODO Look into why item.params doesn't cut it - is it that they are unicode strings and not strings?
-        params = {}
-        params['degree'] = item.params['degree']
-        params['periodic'] = item.params['periodic']
-        params['point'] = item.params['point']
-        params['knot'] = item.params['knot']
-        pm.curve(**params)
+        pm.curve(**item.params)
 
 class CurveItem(QListWidgetItem):
     def __init__(self, parent, name, params):
         super(CurveItem, self).__init__(parent=parent)
-        self.params = params
+        # JSON parses the data as unicode which apparently pymel had issues parsing to MEL
+        self.params = {str(k): v for k, v in params.iteritems()}
         self.name = name
 
 def getUI():
