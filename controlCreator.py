@@ -27,11 +27,42 @@ mayaMainWindow = wrapInstance(long(mayaMainWindowPtr), QWidget)
 # Path to folder where we will keep Curves.
 save_folder = os.path.join(pm.internalVar(userAppDir=True), 'ccLibrary')
 
+# Maya recognized image file formats for setting the render settings image type.
+IMAGE_FILE_FORMAT = {
+  "AVI": 23,
+  "Alias PIX": 6,
+  "Cineon": 11,
+  "DDS": 35,
+  "EPS": 9,
+  "EXR(exr)": 40,
+  "GIF": 0,
+  "JPEG": 8,
+  "MacPaint": 30,
+  "Maya IFF": 7,
+  "Maya16 IFF": 10,
+  "PNG": 32,
+  "PSD": 31,
+  "PSD Layered": 36,
+  "Quantel": 12,
+  "QuickDraw": 33,
+  "QuickTime Image": 34,
+  "Quicktime": 22,
+  "RLA": 2,
+  "SGI": 5,
+  "SGI Movie": 21,
+  "SGI16": 13,
+  "SoftImage": 1,
+  "Targa": 19,
+  "Tiff": 3,
+  "Tiff16": 4,
+  "Windows Bitmap": 20
+}
+
 # If the Folder doesn't exist, make dir
 if not os.path.exists(save_folder):
     os.mkdir(save_folder)
 
-def save_curve(name, curve=None):
+def save_curve(name, curve=None, ff='PNG'):
     """ Store information to rebuild the shape of a curve. """
 
     # If no curve specified try get curve from selection
@@ -59,16 +90,32 @@ def save_curve(name, curve=None):
 
     # TODO Option to save points relative to their pivot - ( Origo-kTransform.pivot ) + PointN...
 
+    # Get average position of all points, this would be same as "center pivot"
+    centerPivot = [sum(p) / len(cvs) for p in zip(*cvs)]
+
+    # Add inverse of new vector to all point positions
+    inversePivot = [i for i in map(lambda x: x * -1, centerPivot)]
+
     data = ([name, {"degree": degrees, "periodic": periodic, "point": cvs, "knot": knots}])
 
     file_name = os.path.join(save_folder, '{}.json'.format(name))
     with open(file_name, 'w') as fp:
         json.dump(data, fp, indent=2, sort_keys=True, ensure_ascii=False)
 
-    # Save the icon
-    save_icon(curve.listRelatives(parent=True)[0], name)
+    # Verify desired image file format
+    if ff in IMAGE_FILE_FORMAT:
+        imageFormat=IMAGE_FILE_FORMAT[ff]
+    else:
+        imageFormat = IMAGE_FILE_FORMAT['PNG']
 
-def save_icon(object, filename):
+    # Save the icon
+    save_icon(
+        curve.listRelatives(parent=True)[0],
+        name,
+        imageFormat
+    )
+
+def save_icon(object, filename, imageFormat):
     """ Take picture of object, render using playblast for later use as a QT Button icon. """
     path = os.path.join(save_folder, "{}.png".format(filename))
 
@@ -80,7 +127,7 @@ def save_icon(object, filename):
     pm.viewFit()
 
     # PNG is 32 in the imageFormat enum.
-    pm.setAttr("defaultRenderGlobals.imageFormat", 32)
+    pm.setAttr("defaultRenderGlobals.imageFormat", imageFormat)
     pm.playblast(completeFilename=path, forceOverwrite=True, format='image', width=200, height=200,
                  showOrnaments=False, startTime=1, endTime=1, viewer=False)
 
@@ -128,12 +175,13 @@ class Window(QWidget):
         self.setWindowTitle("Control Creator")
 
         self.mainLayout()
+        print("bhal")
         self.saveGroupbox()
 
         self.listWidget = CurveList()
         self.listWidget.setViewMode(QListView.IconMode)
-        self.listWidget.setIconSize(QSize(64,64))
-        self.listWidget.setGridSize(QSize(64, 64))
+        self.listWidget.setIconSize(QSize(100,100))
+        self.listWidget.setGridSize(QSize(100, 100))
 
         self.layout().addWidget(self.listWidget)
 
@@ -196,9 +244,9 @@ class Window(QWidget):
             icon = QIcon(iconPath)
             item.setIcon(icon)
 
-            item.setToolTip(parse(data[1]))
+            item.setToolTip(data[0])
 
-            item.setSizeHint(QSize(64, 64))
+            item.setSizeHint(QSize(100, 100))
 
             self.listWidget.addItem(item)
 
@@ -226,11 +274,12 @@ class CurveList(QListWidget):
         pm.curve(**item.params)
 
 class CurveItem(QListWidgetItem):
-    def __init__(self, parent, name, params):
-        super(CurveItem, self).__init__(parent=parent)
+    def __init__(self, parent, name, params, text=None):
+        super(CurveItem, self).__init__(parent=parent, text=text)
         # JSON parses the data as unicode which apparently pymel had issues parsing to MEL
         self.params = {str(k): v for k, v in params.iteritems()}
         self.name = name
+
 
 def getUI():
     window = Window()
