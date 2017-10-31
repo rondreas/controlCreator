@@ -16,9 +16,10 @@ except ImportError:
     from PySide import __version__
     from shiboken import wrapInstance
 
-# TODO Look into developing option to get curve.points from the pivot of the object.
 # TODO add options for loading curve, position to create them at, buffer groups. Custom attributes to throw them on creation?
-# TODO Graphical issue, when selecting an icon one can see a few bright pixels near lower border.
+# TODO Change Icon Highlight color to a more contrasting one on click
+# TODO add checkbox to save curves objectspace or worldspace
+# TODO on curve loads, if nothing selected position at origo, else position at selected.
 
 # Get the Maya window so we can parent our widget to it.
 mayaMainWindowPtr = omui.MQtUtil.mainWindow()
@@ -62,7 +63,7 @@ IMAGE_FILE_FORMAT = {
 if not os.path.exists(save_folder):
     os.mkdir(save_folder)
 
-def save_curve(name, curve=None, ff='PNG'):
+def save_curve(name, curve=None, objectSpace=True):
     """ Store information to rebuild the shape of a curve. """
 
     # If no curve specified try get curve from selection
@@ -88,13 +89,13 @@ def save_curve(name, curve=None, ff='PNG'):
     cvs = [(p.x, p.y, p.z) for p in curve.getCVs()]
     knots = curve.getKnots()
 
-    # TODO Option to save points relative to their pivot - ( Origo-kTransform.pivot ) + PointN...
+    if objectSpace:
+        # Get average position of all points, this would be same as "center pivot"
+        center = [sum(p) / float(len(cvs)) for p in zip(*cvs)]
 
-    # Get average position of all points, this would be same as "center pivot"
-    centerPivot = [sum(p) / len(cvs) for p in zip(*cvs)]
-
-    # Add inverse of new vector to all point positions
-    inversePivot = [i for i in map(lambda x: x * -1, centerPivot)]
+        # Add inverse of new vector to all point positions
+        inverseCenter = pm.datatypes.Vector([i for i in map(lambda x: x * -1, center)])
+        cvs = [(point.x, point.y, point.z) for point in map(lambda x: inverseCenter + x, cvs)]
 
     data = ([name, {"degree": degrees, "periodic": periodic, "point": cvs, "knot": knots}])
 
@@ -102,17 +103,11 @@ def save_curve(name, curve=None, ff='PNG'):
     with open(file_name, 'w') as fp:
         json.dump(data, fp, indent=2, sort_keys=True, ensure_ascii=False)
 
-    # Verify desired image file format
-    if ff in IMAGE_FILE_FORMAT:
-        imageFormat=IMAGE_FILE_FORMAT[ff]
-    else:
-        imageFormat = IMAGE_FILE_FORMAT['PNG']
-
     # Save the icon
     save_icon(
         curve.listRelatives(parent=True)[0],
         name,
-        imageFormat
+        IMAGE_FILE_FORMAT['PNG']
     )
 
 def save_icon(object, filename, imageFormat):
@@ -175,12 +170,13 @@ class Window(QWidget):
         self.setWindowTitle("Control Creator")
 
         self.mainLayout()
-        print("bhal")
         self.saveGroupbox()
 
         self.listWidget = CurveList()
         self.listWidget.setViewMode(QListView.IconMode)
-        self.listWidget.setIconSize(QSize(100,100))
+
+        # Get some graphical issue if IconSize is same as GridSize
+        self.listWidget.setIconSize(QSize(96, 96))
         self.listWidget.setGridSize(QSize(100, 100))
 
         self.layout().addWidget(self.listWidget)
@@ -238,17 +234,8 @@ class Window(QWidget):
 
         for f in library:
             data = load_curve(f)
-            item = CurveItem(self.listWidget, name=data[0], params=data[1])
-
             iconPath = os.path.join(save_folder, "{}.png".format(data[0]))
-            icon = QIcon(iconPath)
-            item.setIcon(icon)
-
-            item.setToolTip(data[0])
-
-            item.setSizeHint(QSize(100, 100))
-
-            self.listWidget.addItem(item)
+            self.listWidget.addItem(CurveItem(data[0], data[1], QIcon(iconPath), None))
 
 class RequiredLineEdit(QLineEdit):
     def __init__(self, text, button):
@@ -274,11 +261,13 @@ class CurveList(QListWidget):
         pm.curve(**item.params)
 
 class CurveItem(QListWidgetItem):
-    def __init__(self, parent, name, params, text=None):
-        super(CurveItem, self).__init__(parent=parent, text=text)
+    def __init__(self, name, params, *args):
+        super(CurveItem, self).__init__(*args)
         # JSON parses the data as unicode which apparently pymel had issues parsing to MEL
         self.params = {str(k): v for k, v in params.iteritems()}
         self.name = name
+
+        self.setToolTip(self.name)
 
 
 def getUI():
