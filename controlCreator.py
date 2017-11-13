@@ -16,17 +16,19 @@ except ImportError:
     from PySide import __version__
     from shiboken import wrapInstance
 
-# TODO add options for loading curve, position to create them at, buffer groups. Custom attributes to throw them on creation?
+# TODO add options for loading curve, position to create them at, buffer groups.
 # TODO Change Icon Highlight color to a more contrasting one on click
 # TODO add checkbox to save curves objectspace or worldspace
 # TODO on curve loads, if nothing selected position at origo, else position at selected.
+# TODO issue with dragging icons.
+# TODO Orthographic camera three-quarter view to better render icons.
 
 # Get the Maya window so we can parent our widget to it.
 mayaMainWindowPtr = omui.MQtUtil.mainWindow()
 mayaMainWindow = wrapInstance(long(mayaMainWindowPtr), QWidget)
 
-# Path to folder where we will keep Curves.
-save_folder = os.path.join(pm.internalVar(userAppDir=True), 'ccLibrary')
+# Path to folder where we will keep Curves, replacing slashes to work in windows
+save_folder = os.path.join(pm.internalVar(userAppDir=True), 'ccLibrary').replace("/", "\\")
 
 # Maya recognized image file formats for setting the render settings image type.
 IMAGE_FILE_FORMAT = {
@@ -135,7 +137,7 @@ def save_icon(object, filename, imageFormat):
 def load_curve(file_name):
     """ Load a saved curve from disk. """
     file_path = os.path.join(save_folder, file_name)
-    if  not os.path.exists(file_path):
+    if not os.path.exists(file_path):
         raise IOError("File {} does not exist in {}".format(file_name, save_folder))
 
     with open(file_path, 'r') as fp:
@@ -171,20 +173,14 @@ class Window(QWidget):
 
         self.mainLayout()
         self.saveGroupbox()
+        self.loadGroupbox()
 
         self.listWidget = CurveList()
-        self.listWidget.setViewMode(QListView.IconMode)
-
-        # Get some graphical issue if IconSize is same as GridSize
-        self.listWidget.setIconSize(QSize(96, 96))
-        self.listWidget.setGridSize(QSize(100, 100))
 
         self.layout().addWidget(self.listWidget)
 
-        # Set resize mode for our list view to adjust layout
-        self.listWidget.setResizeMode(QListView.ResizeMode.Adjust)
-
-        self.load_library()
+        # Load items in save folder
+        self.listWidget.load_library()
 
     def mainLayout(self):
         layout = QVBoxLayout()
@@ -214,6 +210,15 @@ class Window(QWidget):
 
         self.layout().addWidget(save_groupbox)
 
+    def loadGroupbox(self):
+        """ Create the group box containing the options for loading the curves. """
+        load_groupbox = QGroupBox("Load Options")
+        layout = QGridLayout()
+        load_groupbox.setLayout(layout)
+        layout.addWidget(QCheckBox("Add &Offset Transform"), 1, 1)
+        layout.addWidget(QCheckBox("&Move To Selected"), 2, 1)
+        self.layout().addWidget(load_groupbox)
+
     def save(self):
         save_curve(
             self.name_lineEdit.text(),
@@ -221,21 +226,7 @@ class Window(QWidget):
         )
 
         # Reload the library on saves.
-        self.load_library()
-
-    def load_library(self):
-
-        # Clear the widget
-        self.listWidget.clear()
-
-        # Get all files in our folder, then sort out all our jsons to library list, and png icons to theirs.
-        files = os.listdir(save_folder)
-        library = [f for f in files if f.endswith("json")]
-
-        for f in library:
-            data = load_curve(f)
-            iconPath = os.path.join(save_folder, "{}.png".format(data[0]))
-            self.listWidget.addItem(CurveItem(data[0], data[1], QIcon(iconPath), None))
+        self.listWidget.load_library()
 
 class RequiredLineEdit(QLineEdit):
     def __init__(self, text, button):
@@ -256,6 +247,64 @@ class CurveList(QListWidget):
         super(CurveList, self).__init__()
         self.itemClicked.connect(self.createCurve)
 
+        # Set and create connections for custom context menu
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.showContextMenu)
+
+        self.setViewMode(QListView.IconMode)
+
+        # Get some graphical issue if IconSize is same as GridSize
+        self.setIconSize(QSize(96, 96))
+        self.setGridSize(QSize(100, 100))
+
+        # Set resize mode for our list view to adjust layout
+        self.setResizeMode(QListView.ResizeMode.Adjust)
+
+    def showContextMenu(self, pos):
+        """ Set a custom context menu """
+
+        # Get the position where user right-clicked to request the context menu
+        position = self.mapToGlobal(pos)
+
+        menu = QMenu()
+
+        # Define our action and add it to the context menu
+        action = QAction("Delete", self, triggered=self.deleteItem)
+        menu.addAction(action)
+
+        # Execute the context menu to show it and hopefully have it die when not in focus.
+        menu.exec_(position)
+
+    def load_library(self):
+        """ Clear widget of items, and fill with all items in save folder. """
+
+        # Clear the widget
+        self.clear()
+
+        # Get all files in our folder, then sort out all our jsons to library list, and png icons to theirs.
+        files = os.listdir(save_folder)
+        library = [f for f in files if f.endswith("json")]
+
+        for f in library:
+            data = load_curve(f)
+            iconPath = os.path.join(save_folder, "{}.png".format(data[0]))
+            self.addItem(CurveItem(data[0], data[1], QIcon(iconPath), None))
+
+    def deleteItem(self):
+        """ Remove files for selected items. """
+
+        for item in self.selectedItems():
+            data_file = os.path.join(save_folder, '{}.json'.format(item.name))
+            icon_file = os.path.join(save_folder, '{}.png'.format(item.name))
+
+            print("Removing {0}.json and {0}.png in folder {1}".format(item.name, save_folder))
+
+            os.remove(data_file)
+            os.remove(icon_file)
+
+        # Refresh items.
+        self.load_library()
+
     def createCurve(self, item):
         """ Make a pymel call to curve with the stored params. """
         pm.curve(**item.params)
@@ -268,7 +317,6 @@ class CurveItem(QListWidgetItem):
         self.name = name
 
         self.setToolTip(self.name)
-
 
 def getUI():
     window = Window()
