@@ -18,9 +18,7 @@ except ImportError:
 
 # TODO add options for loading curve, position to create them at, buffer groups.
 # TODO Change Icon Highlight color to a more contrasting one on click
-# TODO add checkbox to save curves objectspace or worldspace
 # TODO on curve loads, if nothing selected position at origo, else position at selected.
-# TODO issue with dragging icons.
 # TODO Orthographic camera three-quarter view to better render icons.
 
 # Get the Maya window so we can parent our widget to it.
@@ -65,7 +63,7 @@ IMAGE_FILE_FORMAT = {
 if not os.path.exists(save_folder):
     os.mkdir(save_folder)
 
-def save_curve(name, curve=None, objectSpace=True):
+def save_curve(name, curve=None, centerPivot=True):
     """ Store information to rebuild the shape of a curve. """
 
     # If no curve specified try get curve from selection
@@ -91,7 +89,7 @@ def save_curve(name, curve=None, objectSpace=True):
     cvs = [(p.x, p.y, p.z) for p in curve.getCVs()]
     knots = curve.getKnots()
 
-    if objectSpace:
+    if centerPivot:
         # Get average position of all points, this would be same as "center pivot"
         center = [sum(p) / float(len(cvs)) for p in zip(*cvs)]
 
@@ -200,13 +198,25 @@ class Window(QWidget):
         self.name_lineEdit = RequiredLineEdit("controller1", self.save_button)
         self.name_lineEdit.setToolTip("Name must be specified to save a curve.")
 
-        layout.addWidget(QLabel("Name:"), 1, 1)
-        layout.addWidget(self.name_lineEdit, 1, 2)
+        self.name_lineEdit.sizePolicy().setHorizontalStretch(1)
+        self.curve_lineEdit.sizePolicy().setHorizontalStretch(1)
 
-        layout.addWidget(QLabel("Curve:"), 2, 1)
-        layout.addWidget(self.curve_lineEdit, 2, 2)
+        self.save_center_pivot = QCheckBox("From Center Pivot")
+        self.save_center_pivot.setToolTip("If unchecked, will save curve points in world position.")
+        layout.addWidget(self.save_center_pivot, 1, 1)
 
-        layout.addWidget(self.save_button, 3, 1, 1, 2, Qt.AlignCenter)
+        name_layout = QHBoxLayout()
+        name_layout.addWidget(QLabel("Name:"))
+        name_layout.addWidget(self.name_lineEdit)
+
+        curve_layout = QHBoxLayout()
+        curve_layout.addWidget(QLabel("Curve:"))
+        curve_layout.addWidget(self.curve_lineEdit)
+
+        layout.addLayout(name_layout, 2, 1, 1, 2)
+        layout.addLayout(curve_layout, 3, 1, 1, 2)
+
+        layout.addWidget(self.save_button, 4, 1, 1, 2, Qt.AlignCenter)
 
         self.layout().addWidget(save_groupbox)
 
@@ -215,14 +225,15 @@ class Window(QWidget):
         load_groupbox = QGroupBox("Load Options")
         layout = QGridLayout()
         load_groupbox.setLayout(layout)
-        layout.addWidget(QCheckBox("Add &Offset Transform"), 1, 1)
-        layout.addWidget(QCheckBox("&Move To Selected"), 2, 1)
+        self.offset_transform = QCheckBox("Add &Offset Transform")
+        layout.addWidget(self.offset_transform, 1, 1)
         self.layout().addWidget(load_groupbox)
 
     def save(self):
         save_curve(
-            self.name_lineEdit.text(),
-            self.curve_lineEdit.text()
+            name=self.name_lineEdit.text(),
+            curve=self.curve_lineEdit.text(),
+            centerPivot=self.save_center_pivot.isChecked()
         )
 
         # Reload the library on saves.
@@ -252,6 +263,7 @@ class CurveList(QListWidget):
         self.customContextMenuRequested.connect(self.showContextMenu)
 
         self.setViewMode(QListView.IconMode)
+        self.setMovement(QListView.Static)
 
         # Get some graphical issue if IconSize is same as GridSize
         self.setIconSize(QSize(96, 96))
@@ -259,6 +271,9 @@ class CurveList(QListWidget):
 
         # Set resize mode for our list view to adjust layout
         self.setResizeMode(QListView.ResizeMode.Adjust)
+
+        """ Think in order to solve the QIcon highlighting issue I will have to look into QItemDelegates and 
+        make a custom one. """
 
     def showContextMenu(self, pos):
         """ Set a custom context menu """
@@ -307,7 +322,30 @@ class CurveList(QListWidget):
 
     def createCurve(self, item):
         """ Make a pymel call to curve with the stored params. """
-        pm.curve(**item.params)
+        selection = pm.selected()
+        if selection:
+            for selected in selection:
+                curve = pm.curve(**item.params)
+
+                # Match Transforms, can also be done using parenting with relative flag set.
+                pm.xform(
+                    curve,
+                    ws=True,
+                    translation=pm.xform(selected, q=True, ws=True, t=True),
+                    rotation=pm.xform(selected, q=True, ws=True, ro=True),
+                )
+
+                # Match Names,
+                pm.rename(curve, selected.nodeName() + '_CTRL')
+
+                # If Offset group in parent is checked, add an offset group to zero out transforms for controller.
+                if self.parentWidget().offset_transform.isChecked():
+                    offset_grp = pm.group(empty=True, name='{}_Offset'.format(curve.nodeName()))
+                    pm.parent(offset_grp, selected, relative=True)
+                    pm.parent(offset_grp, world=True)
+                    pm.parent(curve, offset_grp)
+        else:
+            pm.curve(**item.params)
 
 class CurveItem(QListWidgetItem):
     def __init__(self, name, params, *args):
