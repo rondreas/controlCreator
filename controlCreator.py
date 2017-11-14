@@ -16,9 +16,7 @@ except ImportError:
     from PySide import __version__
     from shiboken import wrapInstance
 
-# TODO add options for loading curve, position to create them at, buffer groups.
 # TODO Change Icon Highlight color to a more contrasting one on click
-# TODO on curve loads, if nothing selected position at origo, else position at selected.
 # TODO Orthographic camera three-quarter view to better render icons.
 
 # Get the Maya window so we can parent our widget to it.
@@ -158,6 +156,23 @@ def parse(data):
     except Exception as e:
         print e.message
 
+# Dictionary to convert the radio buttons Ids to directions
+DIRECTIONS = {0: 'X', 1: 'Y', 2: 'Z'}
+
+def change_direction(transform, direction):
+    """ The Curves we create are assumed Y-up was we don't deal with normal or direction of the curve we save.
+    Mostly using this one to not have to save three different circles for example, one for each normal direction,
+    when one can just alter the rotation after creation and prior to moving it to target object. """
+
+    # If X up we want to rotate 90 deg around the Z axis,
+    if direction is 'X':
+        transform.setAttr('rotateZ', 90)
+        pm.makeIdentity(transform, apply=True, rotate=True)
+    # and for Z up we rotate 90 deg around the X axis.
+    elif direction is 'Z':
+        transform.setAttr('rotateX', 90)
+        pm.makeIdentity(transform, apply=True, rotate=True)
+
 class Window(QWidget):
     def __init__(self, parent=mayaMainWindow):
         super(Window, self).__init__(parent=parent)
@@ -225,8 +240,32 @@ class Window(QWidget):
         load_groupbox = QGroupBox("Load Options")
         layout = QGridLayout()
         load_groupbox.setLayout(layout)
+
+        self.ctrl_normal = QButtonGroup()
+        self.ctrl_normal.addButton(QRadioButton("X"))
+        self.ctrl_normal.addButton(QRadioButton("Y"))
+        self.ctrl_normal.addButton(QRadioButton("Z"))
+
+        # Set IDs for buttons 0: X, 1: Y, 2: Z
+        for i, button in enumerate(self.ctrl_normal.buttons()):
+            self.ctrl_normal.setId(button, i)
+            button.setToolTip("Only used if object(s) selected")
+
+        # Set X checked by default
+        self.ctrl_normal.button(0).setChecked(True)
+
+        buttonGroupLayout = QHBoxLayout()
+        buttonGroupLayout.addWidget(QLabel("Up direction:"))
+        buttonGroupLayout.addWidget(self.ctrl_normal.buttons()[0])
+        buttonGroupLayout.addWidget(self.ctrl_normal.buttons()[1])
+        buttonGroupLayout.addWidget(self.ctrl_normal.buttons()[2])
+
         self.offset_transform = QCheckBox("Add &Offset Transform")
-        layout.addWidget(self.offset_transform, 1, 1)
+        self.offset_transform.setChecked(True)
+
+        layout.addLayout(buttonGroupLayout, 1, 1)
+        layout.addWidget(self.offset_transform, 2, 1)
+
         self.layout().addWidget(load_groupbox)
 
     def save(self):
@@ -327,6 +366,10 @@ class CurveList(QListWidget):
             for selected in selection:
                 curve = pm.curve(**item.params)
 
+                # Rotate the curve to fit better.
+                up_direction = self.parentWidget().ctrl_normal.checkedId()
+                change_direction(curve, DIRECTIONS[up_direction])
+
                 # Match Transforms, can also be done using parenting with relative flag set.
                 pm.xform(
                     curve,
@@ -341,9 +384,14 @@ class CurveList(QListWidget):
                 # If Offset group in parent is checked, add an offset group to zero out transforms for controller.
                 if self.parentWidget().offset_transform.isChecked():
                     offset_grp = pm.group(empty=True, name='{}_Offset'.format(curve.nodeName()))
+
+                    # Move the group to selected and set curve as child.
                     pm.parent(offset_grp, selected, relative=True)
                     pm.parent(offset_grp, world=True)
                     pm.parent(curve, offset_grp)
+
+                    # Freeze transform to zero out transforms on curve.
+                    pm.makeIdentity(curve, apply=True, translate=True, rotate=True, s=True)
         else:
             pm.curve(**item.params)
 
